@@ -45,7 +45,7 @@ def get_security_id(symbol, exchange='NSE_FNO'):
 def get_nearest_weekly_expiry(symbol_id):
     """Finds the nearest weekly expiry date."""
     # Fetch expiry dates for the given security ID
-    expiries = dhan.get_option_chain(
+    expiries = dhan.option_chain(
         security_id=str(symbol_id),
         exchange_segment='NSE_FNO',
         instrument_type='OPTIDX'
@@ -69,7 +69,7 @@ def get_nearest_weekly_expiry(symbol_id):
 def get_option_chain(security_id, expiry_date):
     """Fetches the option chain for a given security ID and expiry."""
     try:
-        option_chain = dhan.get_option_chain(
+        option_chain = dhan.option_chain(
             security_id=str(security_id),
             exchange_segment='NSE_FNO',
             instrument_type='OPTIDX',
