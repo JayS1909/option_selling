@@ -24,9 +24,8 @@ def get_security_id(symbol):
 def get_option_chain(security_id, expiry_date):
     """Fetches the option chain for a given security ID and expiry."""
     try:
-        # This call requires positional arguments: security_id and expiry_date
-        response = dhan.option_chain(str(security_id), expiry_date)
-        return response['data']['option_chains']
+        response = dhan.option_chain(str(security_id), 'NSE_FNO', expiry_date)
+        return response['data']['data']
     except Exception as e:
         print(f"Error fetching option chain for {expiry_date}: {e}")
         return None
@@ -35,10 +34,10 @@ def get_price_at_time(instrument_id, target_dt, exchange='NSE_FNO', instrument_t
     """Gets the closing price of an instrument at a specific time."""
     from_date = to_date = target_dt.strftime('%Y-%m-%d')
     if instrument_type == 'INDEX':
+        # This part is currently not used for spot price, but kept for future use.
         instrument_type = 'INDICES'
         exchange = 'NSE_INDEX'
     try:
-        # This call requires positional arguments
         hist_data = dhan.intraday_minute_data(str(instrument_id), exchange, instrument_type, from_date, to_date)
         if hist_data.get('status') == 'success' and 'data' in hist_data and hist_data['data']:
             df = pd.DataFrame(hist_data['data'])
@@ -54,7 +53,6 @@ def get_intraday_price_history(instrument_id, sim_date):
     """Gets the intraday price history for an instrument."""
     from_date = to_date = sim_date.strftime('%Y-%m-%d')
     try:
-        # This call requires positional arguments
         hist_data = dhan.intraday_minute_data(str(instrument_id), 'NSE_FNO', 'OPTIDX', from_date, to_date)
         if hist_data.get('status') == 'success' and 'data' in hist_data and hist_data['data']:
             df = pd.DataFrame(hist_data['data'])
@@ -80,7 +78,6 @@ def run_simulation(sim_date: date):
     security_id = get_security_id(config.TRADING_SYMBOL)
     if not security_id: return None
 
-    # Use the manually set expiry date from the config file
     expiry_str = config.MANUAL_EXPIRY_DATE
     print(f"Using manual expiry date: {expiry_str}")
 
@@ -91,12 +88,12 @@ def run_simulation(sim_date: date):
     entry_dt = datetime.combine(sim_date, datetime.strptime(config.ENTRY_TIME, '%H:%M').time())
     exit_dt = datetime.combine(sim_date, datetime.strptime(config.EXIT_TIME, '%H:%M').time())
 
-    print("Fetching spot price at 9:20 AM...")
-    spot_price = get_price_at_time(security_id, entry_dt, instrument_type='INDEX')
+    # Use the manually set spot price from the config file
+    spot_price = config.MANUAL_SPOT_PRICE
     if spot_price == 0.0:
-        print(f"Could not fetch spot price. Skipping.")
+        print(f"Manual spot price is not set. Please set it in config.py. Skipping.")
         return None
-    print(f"Spot price at {config.ENTRY_TIME}: {spot_price}")
+    print(f"Using manual spot price at {config.ENTRY_TIME}: {spot_price}")
 
     short_ce_strike = round((spot_price + config.SHORT_OTM_DISTANCE) / 100) * 100
     short_pe_strike = round((spot_price - config.SHORT_OTM_DISTANCE) / 100) * 100
