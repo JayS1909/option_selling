@@ -15,31 +15,28 @@ except Exception as e:
 
 def get_security_id(symbol, exchange='NSE_FNO'):
     """Fetches the security ID for a given symbol."""
-    # This is a simplified placeholder. The actual implementation might need to
-    # fetch and cache a list of all securities.
-    # For indices like BANKNIFTY, the underlying security ID is often fixed or derivable.
-    # Let's assume a placeholder logic for now.
-    # For Bank Nifty Index Options, the underlying is BANKNIFTY.
-    # The Dhan API needs a security_id for fetching option chains.
-    # This usually comes from a master instruments list.
-    # A common approach is to find it from the get_tradeable_instrument list.
-    # For this simulation, we'll find an instrument for BANKNIFTY futures to get the ID.
+    # For major indices like BANKNIFTY, it's faster and more reliable to use their known IDs.
+    if symbol == "BANKNIFTY":
+        return 26009  # Known Security ID for BANKNIFTY index (underlying for options)
 
-    # A more direct way for major indices might exist, but this is a robust method.
-    instruments = dhan.get_tradeable_instrument(exchange)
-    df = pd.DataFrame(instruments['data'])
+    # Fallback for other symbols. Note: Fetching the entire scrip master can be slow.
+    # The correct method is `get_scrip_master()`, not `get_tradeable_instrument()`.
+    print(f"Attempting to find security ID for {symbol} from scrip master (this may be slow)...")
+    try:
+        # Corrected API call
+        instruments = dhan.get_scrip_master()
+        df = pd.DataFrame(instruments['data'])
 
-    # Find a future contract for the symbol to get its security_id
-    # This is a common way to get the ID for the underlying index.
-    fno_security = df[(df['SEM_INSTRUMENT_NAME'] == symbol) & (df['SEM_SMST_SECURITY_ID'] == '1')] # 1 for FUTIDX
-    if not fno_security.empty:
-        # The security ID for the index is what we need.
-        # This seems counter-intuitive, but the option chain is linked to the underlying.
-        # Let's use a known value for simplicity, as fetching the whole list is slow.
-        # Bank Nifty ID: 26009 (Index)
-        # Let's hardcode it for reliability in the simulation.
-        if symbol == "BANKNIFTY":
-            return 26009 # Known Security ID for BANKNIFTY index
+        # Find a suitable instrument for the symbol. This logic may need refinement
+        # depending on whether you need a future or an index.
+        fno_security = df[(df['SEM_INSTRUMENT_NAME'] == symbol) & (df['SEM_EXM_EXCH_ID'] == 'NSE_FNO')]
+        if not fno_security.empty:
+            # This returns the first match, which might not always be the intended one.
+            # For the purpose of this script, we primarily care about the BANKNIFTY case above.
+            return fno_security.iloc[0]['SEM_SMST_SECURITY_ID']
+
+    except Exception as e:
+        print(f"Could not fetch from scrip master or find symbol. Error: {e}")
 
     print(f"Security ID for {symbol} not found.")
     return None
