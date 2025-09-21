@@ -16,15 +16,12 @@ except Exception as e:
 
 def get_security_id(symbol, exchange='NSE_FNO'):
     """Fetches the security ID for a given symbol."""
-    # For major indices like BANKNIFTY, it's faster and more reliable to use their known IDs.
     if symbol == "BANKNIFTY":
-        return 26009  # Known Security ID for BANKNIFTY index (underlying for options)
+        return 26009
 
-    # Fallback for other symbols. Note: Fetching the entire scrip master can be slow.
-    print(f"Attempting to find security ID for {symbol} from scrip master (this may be slow)...")
+    print(f"Attempting to find security ID for {symbol} from security list (this may be slow)...")
     try:
-        instruments = dhan.fetch_security_list()
-        df = pd.DataFrame(instruments['data'])
+        df = dhan.fetch_security_list()
 
         fno_security = df[(df['SEM_INSTRUMENT_NAME'] == symbol) & (df['SEM_EXM_EXCH_ID'] == 'NSE_FNO')]
         if not fno_security.empty:
@@ -44,12 +41,11 @@ def get_nearest_weekly_expiry(symbol_name='BANKNIFTY'):
     """
     print("Fetching security list to find expiry dates...")
     try:
-        master = dhan.fetch_security_list()
-        df = pd.DataFrame(master['data'])
+        df = dhan.fetch_security_list()
 
         df_options = df[
             (df['SEM_INSTRUMENT_NAME'] == symbol_name) &
-            (df['SEM_INSTRUMENT_TYPE'] == 'OPTIDX') &
+            (df['SEM_EXCH_INSTRUMENT_TYPE'] == 'OPTIDX') &
             (df['SEM_EXM_EXCH_ID'] == 'NSE_FNO')
         ]
 
@@ -80,10 +76,8 @@ def get_price_at_time(instrument_id, target_dt, exchange='NSE_FNO', instrument_t
     """Gets the closing price of an instrument at a specific time."""
     from_date = to_date = target_dt.strftime('%Y-%m-%d')
 
-    # For index spot price, the instrument type and exchange segment are different.
-    # NOTE: These values might be fragile if the Dhan API changes them.
     if instrument_type == 'INDEX':
-        instrument_type = 'INDICES' # Dhan API uses 'INDICES' for cash market index
+        instrument_type = 'INDICES'
         exchange = 'NSE_INDEX'
 
     try:
@@ -95,8 +89,8 @@ def get_price_at_time(instrument_id, target_dt, exchange='NSE_FNO', instrument_t
             to_date=to_date
         )
 
-        if hist_data['status'] == 'success' and 'data' in hist_data and hist_data['data']:
-            df = pd.DataFrame(hist_data['data'])
+        if hist_data.get('status') == 'success':
+            df = pd.DataFrame(hist_data)
             df['datetime'] = pd.to_datetime(df['start_Time'], unit='s')
 
             target_candle = df[df['datetime'] == target_dt]
@@ -124,8 +118,8 @@ def get_intraday_price_history(instrument_id, sim_date, exchange='NSE_FNO', inst
             from_date=from_date,
             to_date=to_date
         )
-        if hist_data['status'] == 'success' and 'data' in hist_data and hist_data['data']:
-            df = pd.DataFrame(hist_data['data'])
+        if hist_data.get('status') == 'success':
+            df = pd.DataFrame(hist_data)
             df['datetime'] = pd.to_datetime(df['start_Time'], unit='s')
             return df[['datetime', 'high']]
     except Exception as e:
@@ -147,7 +141,6 @@ def run_simulation(sim_date: date):
     """Runs the entire simulation for a given date."""
     print(f"\n--- Running Simulation for {sim_date.strftime('%Y-%m-%d')} ---")
 
-    # --- Setup ---
     security_id = get_security_id(config.TRADING_SYMBOL)
     if not security_id:
         return None
@@ -164,7 +157,6 @@ def run_simulation(sim_date: date):
     entry_dt = datetime.combine(sim_date, datetime.strptime(config.ENTRY_TIME, '%H:%M').time())
     exit_dt = datetime.combine(sim_date, datetime.strptime(config.EXIT_TIME, '%H:%M').time())
 
-    # --- 1. Strike Selection ---
     spot_price = get_price_at_time(security_id, entry_dt, instrument_type='INDEX')
     if spot_price == 0.0:
         print(f"Could not fetch spot price at {entry_dt}. Skipping simulation.")
@@ -216,9 +208,6 @@ def run_simulation(sim_date: date):
     if not ce_history.empty:
         sl_hit_ce = ce_history[(ce_history['datetime'] > entry_dt) & (ce_history['high'] >= short_ce_sl)]
         if not sl_hit_ce.empty:
-            # NOTE: This is a simplified SL simulation. It assumes the exit price is exactly
-            # the SL price. A more realistic model would account for slippage or exit
-            # at the open of the next candle.
             short_ce_exit = short_ce_sl
             print(f"SL HIT for Short CE at {sl_hit_ce.iloc[0]['datetime']}")
 
@@ -257,7 +246,7 @@ def main():
     today = date.today()
     sim_date = today - timedelta(days=1)
 
-    while sim_date.weekday() > 4: # 0-4 are Mon-Fri
+    while sim_date.weekday() > 4:
         sim_date -= timedelta(days=1)
 
     result = run_simulation(sim_date)
