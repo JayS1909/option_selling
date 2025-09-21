@@ -23,7 +23,7 @@ def get_security_id(symbol, exchange='NSE_FNO'):
     try:
         df = dhan.fetch_security_list()
 
-        fno_security = df[(df['SEM_INSTRUMENT_NAME'] == symbol) & (df['SEM_EXM_EXCH_ID'] == 'NSE_FNO')]
+        fno_security = df[(df['SEM_INSTRUMENT_NAME'] == symbol) & (df['SEM_EXM_EXCH_ID'] == 'NSE')]
         if not fno_security.empty:
             return fno_security.iloc[0]['SEM_SMST_SECURITY_ID']
 
@@ -46,7 +46,7 @@ def get_nearest_weekly_expiry(symbol_name='BANKNIFTY'):
         df_options = df[
             (df['SEM_INSTRUMENT_NAME'] == symbol_name) &
             (df['SEM_EXCH_INSTRUMENT_TYPE'] == 'OPTIDX') &
-            (df['SEM_EXM_EXCH_ID'] == 'NSE_FNO')
+            (df['SEM_EXM_EXCH_ID'] == 'NSE')
         ]
 
         expiries = pd.to_datetime(df_options['SEM_EXPIRY_DATE'], format='%Y%m%d').dt.date.unique()
@@ -89,8 +89,8 @@ def get_price_at_time(instrument_id, target_dt, exchange='NSE_FNO', instrument_t
             to_date=to_date
         )
 
-        if hist_data.get('status') == 'success':
-            df = pd.DataFrame(hist_data)
+        if hist_data.get('status') == 'success' and 'data' in hist_data and hist_data['data']:
+            df = pd.DataFrame(hist_data['data'])
             df['datetime'] = pd.to_datetime(df['start_Time'], unit='s')
 
             target_candle = df[df['datetime'] == target_dt]
@@ -118,8 +118,8 @@ def get_intraday_price_history(instrument_id, sim_date, exchange='NSE_FNO', inst
             from_date=from_date,
             to_date=to_date
         )
-        if hist_data.get('status') == 'success':
-            df = pd.DataFrame(hist_data)
+        if hist_data.get('status') == 'success' and 'data' in hist_data and hist_data['data']:
+            df = pd.DataFrame(hist_data['data'])
             df['datetime'] = pd.to_datetime(df['start_Time'], unit='s')
             return df[['datetime', 'high']]
     except Exception as e:
