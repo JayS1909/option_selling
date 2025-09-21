@@ -19,5 +19,10 @@ PREMIUM_SL_PERCENTAGE = 0.25 # 25%
 ENTRY_TIME = "09:20"
 EXIT_TIME = "15:00"
 
+# -- Expiry --
+# IMPORTANT: You must manually set the weekly expiry date here.
+# Format: 'DD-MM-YYYY' (e.g., '26-10-2023')
+MANUAL_EXPIRY_DATE = "19-09-2025" #<-- PLEASE CHANGE THIS TO THE CORRECT WEEKLY EXPIRY
+
 # -- Output --
 EXCEL_FILE_NAME = "simulation_log.xlsx"

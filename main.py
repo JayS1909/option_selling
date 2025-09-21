@@ -18,33 +18,13 @@ def get_security_id(symbol):
     """Returns the hardcoded security ID for the symbol."""
     if symbol == "BANKNIFTY":
         return 26009
-    # This can be expanded for other symbols if needed.
     print(f"Security ID for {symbol} not found.")
-    return None
-
-def get_nearest_weekly_expiry(security_id):
-    """
-    Finds the nearest weekly expiry date using the option_chain call.
-    This is the most direct method.
-    """
-    try:
-        # Calling option_chain without an expiry date returns all available expiries.
-        response = dhan.option_chain(str(security_id))
-        expiry_dates_str = response['data']['expiry_dates']
-
-        today = date.today()
-        expiry_dates = [datetime.strptime(exp, '%d-%m-%Y').date() for exp in expiry_dates_str]
-        future_expiries = sorted([exp for exp in expiry_dates if exp >= today])
-
-        if future_expiries:
-            return future_expiries[0].strftime('%d-%m-%Y')
-    except Exception as e:
-        print(f"Could not fetch expiry dates: {e}")
     return None
 
 def get_option_chain(security_id, expiry_date):
     """Fetches the option chain for a given security ID and expiry."""
     try:
+        # This call requires positional arguments: security_id and expiry_date
         response = dhan.option_chain(str(security_id), expiry_date)
         return response['data']['option_chains']
     except Exception as e:
@@ -58,6 +38,7 @@ def get_price_at_time(instrument_id, target_dt, exchange='NSE_FNO', instrument_t
         instrument_type = 'INDICES'
         exchange = 'NSE_INDEX'
     try:
+        # This call requires positional arguments
         hist_data = dhan.intraday_minute_data(str(instrument_id), exchange, instrument_type, from_date, to_date)
         if hist_data.get('status') == 'success' and 'data' in hist_data and hist_data['data']:
             df = pd.DataFrame(hist_data['data'])
@@ -73,6 +54,7 @@ def get_intraday_price_history(instrument_id, sim_date):
     """Gets the intraday price history for an instrument."""
     from_date = to_date = sim_date.strftime('%Y-%m-%d')
     try:
+        # This call requires positional arguments
         hist_data = dhan.intraday_minute_data(str(instrument_id), 'NSE_FNO', 'OPTIDX', from_date, to_date)
         if hist_data.get('status') == 'success' and 'data' in hist_data and hist_data['data']:
             df = pd.DataFrame(hist_data['data'])
@@ -98,10 +80,9 @@ def run_simulation(sim_date: date):
     security_id = get_security_id(config.TRADING_SYMBOL)
     if not security_id: return None
 
-    print("Finding nearest expiry date...")
-    expiry_str = get_nearest_weekly_expiry(security_id)
-    if not expiry_str: return None
-    print(f"Nearest expiry date: {expiry_str}")
+    # Use the manually set expiry date from the config file
+    expiry_str = config.MANUAL_EXPIRY_DATE
+    print(f"Using manual expiry date: {expiry_str}")
 
     print("Fetching option chain...")
     option_chain = get_option_chain(security_id, expiry_str)
