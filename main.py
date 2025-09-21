@@ -42,40 +42,44 @@ def get_security_id(symbol, exchange='NSE_FNO'):
     return None
 
 
-def get_nearest_weekly_expiry(symbol_id):
-    """Finds the nearest weekly expiry date."""
-    # Fetch expiry dates for the given security ID
-    expiries = dhan.option_chain(
-        security_id=str(symbol_id),
-        exchange_segment='NSE_FNO',
-        instrument_type='OPTIDX'
-    )['data']['expiry_dates']
+def get_nearest_weekly_expiry(symbol_name='BANKNIFTY'):
+    """
+    Finds the nearest weekly expiry date by fetching the scrip master list.
+    This is a more reliable method.
+    """
+    print("Fetching scrip master to find expiry dates...")
+    try:
+        master = dhan.get_scrip_master()
+        df = pd.DataFrame(master['data'])
 
-    today = date.today()
+        # Filter for the specific index options
+        df_options = df[
+            (df['SEM_INSTRUMENT_NAME'] == symbol_name) &
+            (df['SEM_INSTRUMENT_TYPE'] == 'OPTIDX') &
+            (df['SEM_EXM_EXCH_ID'] == 'NSE_FNO')
+        ]
 
-    # Convert expiry strings to date objects
-    expiry_dates = [datetime.strptime(exp, '%d-%m-%Y').date() for exp in expiries]
+        # Get unique expiry dates and convert them to date objects
+        expiries = pd.to_datetime(df_options['SEM_EXPIRY_DATE'], format='%Y%m%d').dt.date.unique()
 
-    # Filter for future expiries
-    future_expiries = sorted([exp for exp in expiry_dates if exp >= today])
+        today = date.today()
+        future_expiries = sorted([exp for exp in expiries if exp >= today])
 
-    # Find the nearest Thursday (or Wednesday if Thursday is a holiday)
-    # The first one in the sorted list is usually the nearest weekly expiry.
-    if future_expiries:
-        return future_expiries[0].strftime('%d-%m-%Y')
+        if future_expiries:
+            print(f"Found nearest expiry: {future_expiries[0]}")
+            return future_expiries[0].strftime('%d-%m-%Y')
+
+    except Exception as e:
+        print(f"Error fetching or processing scrip master for expiry dates: {e}")
 
     return None
 
 def get_option_chain(security_id, expiry_date):
     """Fetches the option chain for a given security ID and expiry."""
     try:
-        option_chain = dhan.option_chain(
-            security_id=str(security_id),
-            exchange_segment='NSE_FNO',
-            instrument_type='OPTIDX',
-            expiry_date=expiry_date
-        )['data']
-        return option_chain['option_chains']
+        # Corrected call with positional arguments
+        option_chain_data = dhan.option_chain(str(security_id), expiry_date)
+        return option_chain_data['data']['option_chains']
     except Exception as e:
         print(f"Error fetching option chain: {e}")
         return None
@@ -100,7 +104,8 @@ def get_price_at_time(instrument_id, target_dt, exchange='NSE_FNO', instrument_t
     """Gets the closing price of an instrument at a specific time."""
     from_date = to_date = target_dt.strftime('%Y-%m-%d')
 
-    # For index spot price, the instrument type is 'INDEX'
+    # For index spot price, the instrument type and exchange segment are different.
+    # NOTE: These values might be fragile if the Dhan API changes them.
     if instrument_type == 'INDEX':
         instrument_type = 'INDICES' # Dhan API uses 'INDICES' for cash market index
         exchange = 'NSE_INDEX'
@@ -173,7 +178,8 @@ def run_simulation(sim_date: date):
     if not security_id:
         return None
 
-    expiry_str = get_nearest_weekly_expiry(security_id)
+    # The new function takes the symbol name directly.
+    expiry_str = get_nearest_weekly_expiry(config.TRADING_SYMBOL)
     if not expiry_str:
         print("Could not find expiry date.")
         return None
@@ -243,6 +249,9 @@ def run_simulation(sim_date: date):
     if not ce_history.empty:
         sl_hit_ce = ce_history[(ce_history['datetime'] > entry_dt) & (ce_history['high'] >= short_ce_sl)]
         if not sl_hit_ce.empty:
+            # NOTE: This is a simplified SL simulation. It assumes the exit price is exactly
+            # the SL price. A more realistic model would account for slippage or exit
+            # at the open of the next candle.
             short_ce_exit = short_ce_sl
             print(f"SL HIT for Short CE at {sl_hit_ce.iloc[0]['datetime']}")
 
@@ -271,7 +280,8 @@ def run_simulation(sim_date: date):
     total_pl = pl_short_ce + pl_hedge_ce + pl_short_pe + pl_hedge_pe
 
     trade_log.update({
-        'Short CE P/L': pl_short_ce, 'Short PE P/L': pl_short_pe,
+        'Short CE P/L': pl_short_ce, 'Hedge CE P/L': pl_hedge_ce,
+        'Short PE P/L': pl_short_pe, 'Hedge PE P/L': pl_hedge_pe,
         'Total P/L': total_pl
     })
 
@@ -302,36 +312,36 @@ def main():
 import os
 
 def export_to_excel(trade_log):
-    """Exports the trade log dictionary to an Excel file."""
+    """
+    Exports the trade log dictionary to an Excel file.
+    This function correctly handles appending new rows to an existing file.
+    """
     if not trade_log:
         return
 
-    df = pd.DataFrame([trade_log])
+    new_df = pd.DataFrame([trade_log])
     filename = config.EXCEL_FILE_NAME
 
     # Define the desired column order
     columns = [
         'Date', 'Spot Price',
         'Short CE Strike', 'Short CE Premium', 'Short CE SL', 'Short CE Exit Price', 'Short CE P/L',
-        'Hedge CE Strike', 'Hedge CE Premium', 'Hedge CE Exit Price',
+        'Hedge CE Strike', 'Hedge CE Premium', 'Hedge CE Exit Price', 'Hedge CE P/L',
         'Short PE Strike', 'Short PE Premium', 'Short PE SL', 'Short PE Exit Price', 'Short PE P/L',
-        'Hedge PE Strike', 'Hedge PE Premium', 'Hedge PE Exit Price',
+        'Hedge PE Strike', 'Hedge PE Premium', 'Hedge PE Exit Price', 'Hedge PE P/L',
         'Net Credit', 'Total P/L'
     ]
-    df = df[columns]
+    new_df = new_df[columns]
 
     try:
-        # Check if file exists to determine if we need to write headers
-        file_exists = os.path.isfile(filename)
+        # Use the robust read-modify-write pattern for appending to Excel
+        if os.path.isfile(filename):
+            existing_df = pd.read_excel(filename)
+            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+        else:
+            combined_df = new_df
 
-        with pd.ExcelWriter(filename, mode='a' if file_exists else 'w', engine='openpyxl', if_sheet_exists='overlay' if file_exists else None) as writer:
-            if file_exists:
-                # Find the last row in the 'Trades' sheet and append after it
-                startrow = writer.book['Trades'].max_row
-                df.to_excel(writer, index=False, header=False, sheet_name='Trades', startrow=startrow)
-            else:
-                # If the file is new, write with header
-                df.to_excel(writer, index=False, header=True, sheet_name='Trades')
+        combined_df.to_excel(filename, index=False, sheet_name='Trades')
 
         print(f"Successfully exported trade to {filename}")
 
