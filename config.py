@@ -1,32 +1,17 @@
 # -- Dhan API Credentials --
-# Replace with your actual Client ID and Access Token
+# Please enter your Dhan Client ID and Access Token below.
+# The Access Token can be generated from web.dhan.co
 DHAN_CLIENT_ID = "YOUR_CLIENT_ID"
 DHAN_ACCESS_TOKEN = "YOUR_ACCESS_TOKEN"
 
 # -- Strategy Parameters --
-# Symbol to trade
 TRADING_SYMBOL = "BANKNIFTY"
-# OTM distance for short legs (in points)
-SHORT_OTM_DISTANCE = 300
-# Distance from short strikes to hedge strikes (in points)
-HEDGE_DISTANCE = 500 # e.g., 400-500 points away from short strike
-
-# -- Stop Loss Parameters --
-# Stop loss for short legs as a percentage of the premium received (e.g., 0.2 for 20%)
-PREMIUM_SL_PERCENTAGE = 0.25 # 25%
-
-# -- Timing --
-ENTRY_TIME = "09:20"
-EXIT_TIME = "15:00"
-
-# -- Expiry & Spot Price --
-# IMPORTANT: You must manually set these values before running the simulation.
-
-# Set the weekly expiry date. Format: 'DD-MM-YYYY' (e.g., '26-10-2023')
-MANUAL_EXPIRY_DATE = "19-09-2025" #<-- PLEASE CHANGE THIS
-
-# Set the spot price of the index at 9:20 AM for the simulation day.
-MANUAL_SPOT_PRICE = 48000.0 #<-- PLEASE CHANGE THIS
+# OTM distance for short legs in steps (1 step = 100 points for BANKNIFTY)
+# 300 points = 3 steps
+SHORT_OTM_STEPS = 3
+# Hedge distance from short strikes in steps
+# 400 points away from short strike = 4 steps from ATM + 3 steps OTM = 7 steps total from ATM
+HEDGE_OTM_STEPS = 7 # 3 for short + 4 for hedge distance
 
 # -- Output --
-EXCEL_FILE_NAME = "simulation_log.xlsx"
+EXCEL_FILE_NAME = "live_trade_log.xlsx"

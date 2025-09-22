@@ -1,208 +1,125 @@
 import config
 import pandas as pd
-from datetime import datetime, date, timedelta
-from dhanhq import dhanhq
+from datetime import datetime, date, time
+import time as os_time
 import os
+import xlwings as xw
 
-# --- Dhan API Initialization ---
+# We assume the user has installed the custom Dhan_Tradehull_V2 library
+# and it is available in the environment.
 try:
-    dhan = dhanhq(config.DHAN_CLIENT_ID, config.DHAN_ACCESS_TOKEN)
-    print("Dhan API client initialized successfully.")
-except Exception as e:
-    print(f"Error initializing Dhan API client: {e}")
+    from Dhan_Tradehull_V2 import Tradehull
+except ImportError:
+    print("FATAL ERROR: The 'Dhan_Tradehull_V2' library is not installed.")
+    print("Please make sure the library file is in the same directory or installed in your Python environment.")
     exit()
 
-# --- Core API Functions ---
-
-def get_security_id(symbol):
-    """Returns the hardcoded security ID for the symbol."""
-    if symbol == "BANKNIFTY":
-        return 26009
-    print(f"Security ID for {symbol} not found.")
-    return None
-
-def get_option_chain(security_id, expiry_date):
-    """Fetches the option chain for a given security ID and expiry."""
+def initialize_tradehull():
+    """Initializes the Tradehull object."""
     try:
-        response = dhan.option_chain(str(security_id), 'NSE_FNO', expiry_date)
-        return response['data']['data']
+        tsl = Tradehull(config.DHAN_CLIENT_ID, config.DHAN_ACCESS_TOKEN)
+        print("Tradehull client initialized successfully.")
+        return tsl
     except Exception as e:
-        print(f"Error fetching option chain for {expiry_date}: {e}")
+        print(f"Error initializing Tradehull client: {e}")
         return None
 
-def get_price_at_time(instrument_id, target_dt, exchange='NSE_FNO', instrument_type='OPTIDX'):
-    """Gets the closing price of an instrument at a specific time."""
-    from_date = to_date = target_dt.strftime('%Y-%m-%d')
-    if instrument_type == 'INDEX':
-        # This part is currently not used for spot price, but kept for future use.
-        instrument_type = 'INDICES'
-        exchange = 'NSE_INDEX'
+def run_live_paper_trade(tsl):
+    """
+    Executes the 9:20 AM strategy to fetch live prices and log them.
+    This is a LIVE PAPER TRADING tool.
+    """
+    print(f"\n--- Running Live Paper Trade for {date.today().strftime('%Y-%m-%d')} ---")
+
+    # --- Get ATM and OTM strikes using the library's functions ---
+    # The Expiry=0 argument fetches the nearest weekly expiry automatically.
+    print("Fetching option strikes...")
     try:
-        hist_data = dhan.intraday_minute_data(str(instrument_id), exchange, instrument_type, from_date, to_date)
-        if hist_data.get('status') == 'success' and 'data' in hist_data and hist_data['data']:
-            df = pd.DataFrame(hist_data['data'])
-            df['datetime'] = pd.to_datetime(df['start_Time'], unit='s')
-            target_candle = df[df['datetime'] <= target_dt]
-            if not target_candle.empty:
-                return target_candle.iloc[-1]['close']
+        short_ce_symbol, short_pe_symbol, short_ce_strike, short_pe_strike = tsl.OTM_Strike_Selection(
+            Underlying=config.TRADING_SYMBOL, Expiry=0, OTM_count=config.SHORT_OTM_STEPS
+        )
+        hedge_ce_symbol, hedge_pe_symbol, hedge_ce_strike, hedge_pe_strike = tsl.OTM_Strike_Selection(
+            Underlying=config.TRADING_SYMBOL, Expiry=0, OTM_count=config.HEDGE_OTM_STEPS
+        )
     except Exception as e:
-        print(f"Error fetching price for {instrument_id} at {target_dt}: {e}")
-    return 0.0
+        print(f"Error during strike selection: {e}")
+        print("This might be due to incorrect credentials or being outside market hours.")
+        return
 
-def get_intraday_price_history(instrument_id, sim_date):
-    """Gets the intraday price history for an instrument."""
-    from_date = to_date = sim_date.strftime('%Y-%m-%d')
+    if not all([short_ce_symbol, short_pe_symbol, hedge_ce_symbol, hedge_pe_symbol]):
+        print("Could not retrieve all necessary option symbols. Exiting.")
+        return
+
+    print(f"Short Strikes -> CE: {short_ce_strike} ({short_ce_symbol}), PE: {short_pe_strike} ({short_pe_symbol})")
+    print(f"Hedge Strikes -> CE: {hedge_ce_strike} ({hedge_ce_symbol}), PE: {hedge_pe_strike} ({hedge_pe_symbol})")
+
+    # --- Fetch Live Prices ---
+    print("Fetching live prices for all option legs...")
+    option_symbols = [short_ce_symbol, short_pe_symbol, hedge_ce_symbol, hedge_pe_symbol]
+
     try:
-        hist_data = dhan.intraday_minute_data(str(instrument_id), 'NSE_FNO', 'OPTIDX', from_date, to_date)
-        if hist_data.get('status') == 'success' and 'data' in hist_data and hist_data['data']:
-            df = pd.DataFrame(hist_data['data'])
-            df['datetime'] = pd.to_datetime(df['start_Time'], unit='s')
-            return df[['datetime', 'high']]
+        ltp_data = tsl.get_ltp_data(names=option_symbols)
+        if not all(symbol in ltp_data for symbol in option_symbols):
+            print("Could not fetch LTP for all symbols.")
+            return
     except Exception as e:
-        print(f"Error fetching intraday history for {instrument_id}: {e}")
-    return pd.DataFrame()
+        print(f"Error fetching LTP data: {e}")
+        return
 
-def find_option_instrument(option_chain, strike, option_type):
-    """Finds the instrument ID for a given strike and type from the option chain."""
-    for option in option_chain:
-        if option['strike_price'] == strike:
-            if option_type == 'CE' and option['ce_tradingsymbol']:
-                return option['ce_dhan_instrument_id']
-            elif option_type == 'PE' and option['pe_tradingsymbol']:
-                return option['pe_dhan_instrument_id']
-    return None
+    short_ce_premium = ltp_data.get(short_ce_symbol, 0)
+    short_pe_premium = ltp_data.get(short_pe_symbol, 0)
+    hedge_ce_premium = ltp_data.get(hedge_ce_symbol, 0)
+    hedge_pe_premium = ltp_data.get(hedge_pe_symbol, 0)
 
-def run_simulation(sim_date: date):
-    """Runs the entire simulation for a given date."""
-    print(f"\n--- Running Simulation for {sim_date.strftime('%Y-%m-%d')} ---")
-    security_id = get_security_id(config.TRADING_SYMBOL)
-    if not security_id: return None
-
-    expiry_str = config.MANUAL_EXPIRY_DATE
-    print(f"Using manual expiry date: {expiry_str}")
-
-    print("Fetching option chain...")
-    option_chain = get_option_chain(security_id, expiry_str)
-    if not option_chain: return None
-
-    entry_dt = datetime.combine(sim_date, datetime.strptime(config.ENTRY_TIME, '%H:%M').time())
-    exit_dt = datetime.combine(sim_date, datetime.strptime(config.EXIT_TIME, '%H:%M').time())
-
-    # Use the manually set spot price from the config file
-    spot_price = config.MANUAL_SPOT_PRICE
-    if spot_price == 0.0:
-        print(f"Manual spot price is not set. Please set it in config.py. Skipping.")
-        return None
-    print(f"Using manual spot price at {config.ENTRY_TIME}: {spot_price}")
-
-    short_ce_strike = round((spot_price + config.SHORT_OTM_DISTANCE) / 100) * 100
-    short_pe_strike = round((spot_price - config.SHORT_OTM_DISTANCE) / 100) * 100
-    hedge_ce_strike = short_ce_strike + config.HEDGE_DISTANCE
-    hedge_pe_strike = short_pe_strike - config.HEDGE_DISTANCE
-
-    print(f"Strikes -> Short CE: {short_ce_strike}, Hedge CE: {hedge_ce_strike}")
-    print(f"Strikes -> Short PE: {short_pe_strike}, Hedge PE: {hedge_pe_strike}")
-
-    short_ce_id = find_option_instrument(option_chain, short_ce_strike, 'CE')
-    hedge_ce_id = find_option_instrument(option_chain, hedge_ce_strike, 'CE')
-    short_pe_id = find_option_instrument(option_chain, short_pe_strike, 'PE')
-    hedge_pe_id = find_option_instrument(option_chain, hedge_pe_strike, 'PE')
-
-    if not all([short_ce_id, hedge_ce_id, short_pe_id, hedge_pe_id]):
-        print("Could not find all required option instruments.")
-        return None
-
-    trade_log = {'Date': sim_date.strftime('%Y-%m-%d'), 'Spot Price': spot_price}
-    short_ce_premium = get_price_at_time(short_ce_id, entry_dt)
-    hedge_ce_premium = get_price_at_time(hedge_ce_id, entry_dt)
-    short_pe_premium = get_price_at_time(short_pe_id, entry_dt)
-    hedge_pe_premium = get_price_at_time(hedge_pe_id, entry_dt)
-
-    trade_log.update({
+    # --- Log the Data ---
+    trade_log = {
+        'Date': date.today().strftime('%Y-%m-%d'),
+        'Timestamp': datetime.now().strftime('%H:%M:%S'),
+        'Underlying': config.TRADING_SYMBOL,
         'Short CE Strike': short_ce_strike, 'Short CE Premium': short_ce_premium,
         'Hedge CE Strike': hedge_ce_strike, 'Hedge CE Premium': hedge_ce_premium,
         'Short PE Strike': short_pe_strike, 'Short PE Premium': short_pe_premium,
         'Hedge PE Strike': hedge_pe_strike, 'Hedge PE Premium': hedge_pe_premium,
-    })
+        'Net Credit': (short_ce_premium + short_pe_premium) - (hedge_ce_premium + hedge_pe_premium)
+    }
 
-    net_credit = (short_ce_premium + short_pe_premium) - (hedge_ce_premium + hedge_pe_premium)
-    trade_log['Net Credit'] = net_credit
-    print(f"Net Credit: {net_credit:.2f}")
-
-    short_ce_sl = short_ce_premium * (1 + config.PREMIUM_SL_PERCENTAGE)
-    short_pe_sl = short_pe_premium * (1 + config.PREMIUM_SL_PERCENTAGE)
-    trade_log.update({'Short CE SL': short_ce_sl, 'Short PE SL': short_pe_sl})
-
-    short_ce_exit, short_pe_exit = None, None
-    ce_history = get_intraday_price_history(short_ce_id, sim_date)
-    if not ce_history.empty:
-        sl_hit_ce = ce_history[(ce_history['datetime'] > entry_dt) & (ce_history['high'] >= short_ce_sl)]
-        if not sl_hit_ce.empty:
-            short_ce_exit = short_ce_sl
-            print(f"SL HIT for Short CE at {sl_hit_ce.iloc[0]['datetime']}")
-
-    pe_history = get_intraday_price_history(short_pe_id, sim_date)
-    if not pe_history.empty:
-        sl_hit_pe = pe_history[(pe_history['datetime'] > entry_dt) & (pe_history['high'] >= short_pe_sl)]
-        if not sl_hit_pe.empty:
-            short_pe_exit = short_pe_sl
-            print(f"SL HIT for Short PE at {sl_hit_pe.iloc[0]['datetime']}")
-
-    trade_log['Short CE Exit Price'] = short_ce_exit if short_ce_exit else get_price_at_time(short_ce_id, exit_dt)
-    trade_log['Hedge CE Exit Price'] = get_price_at_time(hedge_ce_id, exit_dt)
-    trade_log['Short PE Exit Price'] = short_pe_exit if short_pe_exit else get_price_at_time(short_pe_id, exit_dt)
-    trade_log['Hedge PE Exit Price'] = get_price_at_time(hedge_pe_id, exit_dt)
-
-    lot_size = 15
-    pl_short_ce = (short_ce_premium - trade_log['Short CE Exit Price']) * lot_size
-    pl_hedge_ce = (trade_log['Hedge CE Exit Price'] - hedge_ce_premium) * lot_size
-    pl_short_pe = (short_pe_premium - trade_log['Short PE Exit Price']) * lot_size
-    pl_hedge_pe = (trade_log['Hedge PE Exit Price'] - hedge_pe_premium) * lot_size
-    total_pl = pl_short_ce + pl_hedge_ce + pl_short_pe + pl_hedge_pe
-    trade_log.update({
-        'Short CE P/L': pl_short_ce, 'Hedge CE P/L': pl_hedge_ce,
-        'Short PE P/L': pl_short_pe, 'Hedge PE P/L': pl_hedge_pe,
-        'Total P/L': total_pl
-    })
-    print(f"Total P/L for the day: {total_pl:.2f}")
-    return trade_log
-
-def main():
-    """Main function to run the simulation."""
-    today = date.today()
-    sim_date = today - timedelta(days=1)
-    while sim_date.weekday() > 4:
-        sim_date -= timedelta(days=1)
-    result = run_simulation(sim_date)
-    if result:
-        print("\n--- Simulation Result ---")
-        print(pd.Series(result))
-        export_to_excel(result)
+    print("\n--- Live Trade Data Captured ---")
+    print(pd.Series(trade_log))
+    export_to_excel(trade_log)
 
 def export_to_excel(trade_log):
     """Exports the trade log dictionary to an Excel file."""
     if not trade_log: return
     new_df = pd.DataFrame([trade_log])
     filename = config.EXCEL_FILE_NAME
-    columns = [
-        'Date', 'Spot Price',
-        'Short CE Strike', 'Short CE Premium', 'Short CE SL', 'Short CE Exit Price', 'Short CE P/L',
-        'Hedge CE Strike', 'Hedge CE Premium', 'Hedge CE Exit Price', 'Hedge CE P/L',
-        'Short PE Strike', 'Short PE Premium', 'Short PE SL', 'Short PE Exit Price', 'Short PE P/L',
-        'Hedge PE Strike', 'Hedge PE Premium', 'Hedge PE Exit Price', 'Hedge PE P/L',
-        'Net Credit', 'Total P/L'
-    ]
+
+    columns = list(trade_log.keys())
     new_df = new_df[columns]
+
     try:
         if os.path.isfile(filename):
             existing_df = pd.read_excel(filename)
             combined_df = pd.concat([existing_df, new_df], ignore_index=True)
         else:
             combined_df = new_df
-        combined_df.to_excel(filename, index=False, sheet_name='Trades')
-        print(f"Successfully exported trade to {filename}")
+        combined_df.to_excel(filename, index=False, sheet_name='LiveTradeLog')
+        print(f"\nSuccessfully exported trade data to {filename}")
     except Exception as e:
         print(f"Error exporting to Excel: {e}")
+
+def main():
+    """Main function to run the script."""
+    print("--- 9:20 Hedged OTM Strategy - Live Paper Trading Tool ---")
+
+    # Optional: Wait until 9:20 AM to run
+    entry_time = time(9, 20)
+    while datetime.now().time() < entry_time:
+        print(f"Waiting for {entry_time}... Current time is {datetime.now().strftime('%H:%M:%S')}", end="\r")
+        os_time.sleep(1)
+
+    tsl = initialize_tradehull()
+    if tsl:
+        run_live_paper_trade(tsl)
 
 if __name__ == "__main__":
     main()
