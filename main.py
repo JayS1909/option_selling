@@ -5,10 +5,10 @@ import time as os_time
 import os
 import xlwings as xw
 
-# We assume the user has installed the custom Dhan_Tradehull_V2 library
-# and it is available in the environment.
+# We assume the user has placed the custom Dhan_Tradehull.py library
+# in the same directory as this script.
 try:
-    from Dhan_Tradehull_V2 import Tradehull
+    from Dhan_Tradehull import Tradehull
 except ImportError:
     print("FATAL ERROR: The 'Dhan_Tradehull_V2' library is not installed.")
     print("Please make sure the library file is in the same directory or installed in your Python environment.")
