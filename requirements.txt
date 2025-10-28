@@ -1,0 +1,8 @@
+pandas
+xlwings
+requests
+# The user needs to install the custom library, often via a specific file or command
+# For example: pip install --upgrade Dhan-Tradehull
+# We will list the known dependencies from the user's code.
+# TA-Lib is a dependency that must be installed manually first.
+TA-Lib
